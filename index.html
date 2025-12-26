@@ -152,6 +152,8 @@
 
     <!-- Scripts -->
     <script src="https://code.jquery.com/jquery-latest.js"></script>
+    <!-- Local API key for testing (ignored by git). Create apikey.js with window.config.apikey -->
+    <script src="apikey.js"></script>
 
     <script>
         // Kakao Map Initialization
@@ -167,8 +169,7 @@
         map.addControl(zoomControl, kakao.maps.ControlPosition.RIGHT);
 
         (function fetchStoresFromApi() {
-            // TODO : 키 암호화
-            const SERVICE_KEY = '';
+            const SERVICE_KEY = config.apikey;
             const NUM_OF_ROWS = 1000;
             const PAGE_NO = 1;
 
