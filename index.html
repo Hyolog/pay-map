@@ -99,6 +99,21 @@
             height: 100vh;
         }
 
+        /* Floating location button - positioned relative to adjusted map area (top 60%) */
+        #loc-btn {
+            position: fixed;
+            right: 20px;
+            /* default bottom will be set dynamically to sit above the bottom of adjusted area */
+            z-index: 1100;
+            background: #fff;
+            border: none;
+            padding: 10px 12px;
+            border-radius: 8px;
+            box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+            cursor: pointer;
+            font-weight: 600;
+        }
+
         .customoverlay {
             background-color: #eef3fd;
             border: #536AFF solid 1px;
@@ -188,6 +203,9 @@
         <div id="store-list"></div>
     </div>
 
+    <!-- Floating location button -->
+    <button id="loc-btn" aria-label="내 위치로 이동" title="내 위치로 이동" onclick="centerToUser()">내 위치</button>
+
     <!-- Map Container -->
     <div id="map"></div>
 
@@ -197,6 +215,87 @@
     <script src="apikey.js"></script>
 
     <script>
+        // Geolocation: prompt on load and show floating button if allowed
+        var userLocation = null;
+        var geolocationPromptShown = false;
+        function requestGeolocationOnDemand(callback) {
+            if (!navigator.geolocation) {
+                callback && callback(new Error('Geolocation not supported'));
+                return;
+            }
+            navigator.geolocation.getCurrentPosition(function(pos) {
+                userLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                callback && callback(null, userLocation);
+            }, function(err) {
+                callback && callback(err);
+            }, { enableHighAccuracy: false, timeout: 5000 });
+        }
+
+        function centerToUser() {
+            // show permission prompt only when user first clicks
+            if (!geolocationPromptShown) {
+                geolocationPromptShown = true;
+                requestGeolocationOnDemand(function(err, loc) {
+                    if (err) {
+                        alert('위치 정보를 사용할 수 없습니다: ' + (err.message || err.code || 'unknown'));
+                        return;
+                    }
+                    positionLocButton();
+                    var btn = document.getElementById('loc-btn');
+                    if (btn) btn.style.display = 'block';
+                    centerUserInAdjustedArea(loc);
+                });
+                return;
+            }
+
+            if (userLocation) {
+                centerUserInAdjustedArea(userLocation);
+                return;
+            }
+
+            // fallback: try to get location again
+            requestGeolocationOnDemand(function(err, loc) {
+                if (err) { alert('위치 정보를 사용할 수 없습니다: ' + (err.message || err.code || 'unknown')); return; }
+                centerUserInAdjustedArea(loc);
+            });
+        }
+
+        var userMarker = null;
+        function centerMapTo(loc) {
+            var coords = new kakao.maps.LatLng(loc.lat, loc.lng);
+            map.setLevel(4);
+            map.setCenter(coords);
+
+            if (userMarker) userMarker.setMap(null);
+            userMarker = new kakao.maps.Marker({ position: coords, map: map });
+        }
+
+        // center user's location to the middle of adjusted visible area (top 60% center)
+        function centerUserInAdjustedArea(loc) {
+            var adj = getAdjustedBounds();
+            if (!adj) {
+                centerMapTo(loc);
+                return;
+            }
+
+            var adjCenterLat = (adj.sw.getLat() + adj.ne.getLat()) / 2;
+            var adjCenterLng = (adj.sw.getLng() + adj.ne.getLng()) / 2;
+
+            var currentCenter = map.getCenter();
+            var newCenterLat = currentCenter.getLat() + (loc.lat - adjCenterLat);
+            var newCenterLng = currentCenter.getLng() + (loc.lng - adjCenterLng);
+
+            var newCenter = new kakao.maps.LatLng(newCenterLat, newCenterLng);
+            map.setLevel(4);
+            map.setCenter(newCenter);
+
+            if (userMarker) userMarker.setMap(null);
+            var userPos = new kakao.maps.LatLng(loc.lat, loc.lng);
+            userMarker = new kakao.maps.Marker({ position: userPos, map: map });
+        }
+
+        // request permission on load
+        window.addEventListener('load', function() { requestGeolocation(); });
         // Kakao Map Initialization
         var mapContainer = document.getElementById('map');
         var mapOption = {
@@ -477,6 +576,51 @@
         kakao.maps.event.addListener(map, 'zoom_changed', function() {
             updateVisibleStoreList();
         });
+
+        // wire location button
+        document.addEventListener('DOMContentLoaded', function() {
+            var btn = document.getElementById('loc-btn');
+            if (btn) {
+                btn.addEventListener('click', centerToUser);
+                // position button within adjusted area
+                positionLocButton();
+                window.addEventListener('resize', positionLocButton);
+                kakao.maps.event.addListener(map, 'idle', positionLocButton);
+            }
+        });
+
+        function positionLocButton() {
+            var btn = document.getElementById('loc-btn');
+            if (!btn) return;
+            var adj = getAdjustedBounds();
+            var bottomSheet = document.getElementById('bottom-sheet');
+            var mapDiv = document.getElementById('map');
+            var mapRect = mapDiv.getBoundingClientRect();
+
+            if (!adj) {
+                btn.style.bottom = (bottomSheet.offsetHeight + 16) + 'px';
+                return;
+            }
+
+            // We want the button in the bottom-right corner of the adjusted visible area.
+            // Compute adjusted area's bottom pixel position relative to viewport.
+            var bounds = map.getBounds();
+            if (!bounds) { btn.style.bottom = (bottomSheet.offsetHeight + 16) + 'px'; return; }
+
+            var fullNe = bounds.getNorthEast();
+            var fullSw = bounds.getSouthWest();
+            var fullLatSpan = fullNe.getLat() - fullSw.getLat();
+
+            // adjusted bottom latitude is adj.sw (because adj.sw is the southern boundary of adjusted area)
+            var adjBottomLat = adj.sw.getLat();
+            var fracFromTop = (fullNe.getLat() - adjBottomLat) / fullLatSpan;
+            var y = mapRect.top + fracFromTop * mapRect.height;
+
+            // place button slightly above adjusted bottom and slightly inset from right
+            var bottomPx = window.innerHeight - y + 12; // 12px padding above adjusted bottom
+            btn.style.bottom = bottomPx + 'px';
+            btn.style.right = '20px';
+        }
 
         function populateBusinessGroupSelect(groups) {
             var businessGroupList = document.getElementById('search-business-group');
