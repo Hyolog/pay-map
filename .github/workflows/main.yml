@@ -4,6 +4,10 @@ on:
 
   workflow_dispatch:
 
+permissions:
+  id-token: write   # Required for OIDC token requests
+  contents: read    # Allows actions/deploy-pages to read the repo
+
 jobs:
   build:
     runs-on: ubuntu-latest
