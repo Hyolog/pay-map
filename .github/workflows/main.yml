@@ -1,8 +1,13 @@
 on:
   push:
-    branches: ["master"]
+    branches: ["main"]
 
   workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write   # <-- This line is required
+  id-token: write
 
 jobs:
   build:
