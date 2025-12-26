@@ -209,6 +209,11 @@
         var zoomControl = new kakao.maps.ZoomControl();
         map.addControl(zoomControl, kakao.maps.ControlPosition.RIGHT);
 
+    // Globals for stores and markers with coordinates
+    var allStoresWithCoords = []; // { name, location, businessGroup, lat, lng }
+    var markersGlobal = [];
+    var clustererGlobal = null;
+
         (function fetchStoresFromApi() {
             const SERVICE_KEY = config.apikey;
             const NUM_OF_ROWS = 1000;
@@ -264,7 +269,7 @@
         function makeStoreClusterer(data) {
             document.getElementById('loading').style.display = 'flex';
 
-            var clusterer = new kakao.maps.MarkerClusterer({
+            clustererGlobal = new kakao.maps.MarkerClusterer({
                 map: map,
                 averageCenter: true,
                 minLevel: 5
@@ -281,7 +286,22 @@
             // Function to send requests sequentially
             function sendNextRequest() {
                 if (currentIndex >= total) {
-                    addMarkersToClusterStores(stores, coords, clusterer);
+                    // build array of stores with coordinates for easy spatial filtering
+                    allStoresWithCoords = stores.filter(function(s) { return coords[s.location]; }).map(function(s) {
+                        return {
+                            name: s.name,
+                            location: s.location,
+                            businessGroup: s.businessGroup,
+                            lat: coords[s.location].y,
+                            lng: coords[s.location].x
+                        };
+                    });
+
+                    addMarkersToClusterStores(stores, coords, clustererGlobal);
+
+                    // initial render: show stores within current map bounds
+                    updateVisibleStoreList();
+
                     document.getElementById('loading').style.display = 'none';
                     return;
                 }
@@ -310,6 +330,10 @@
         }
 
         function addMarkersToClusterStores(stores, coords, clusterer) {
+            // remove previous markers
+            markersGlobal.forEach(function(m) { m.setMap(null); });
+            markersGlobal = [];
+
             var markers = [];
             stores.forEach(function (store) {
                 if (coords[store.location]) {
@@ -324,22 +348,58 @@
                     });
 
                     markers.push(marker);
+                    markersGlobal.push({ marker: marker, store: store, lat: coords[store.location].y, lng: coords[store.location].x });
                     overlay.setMap(null);
                 }
             });
             clusterer.addMarkers(markers);
+
+            // cluster click: when a cluster is clicked, show only stores inside cluster bounds
+            kakao.maps.event.addListener(clusterer, 'clusterclick', function(cluster) {
+                var clusteredMarkers = cluster.getMarkers();
+                // compute a set of locations from clustered markers
+                var clusteredCoords = clusteredMarkers.map(function(cm) {
+                    var p = cm.getPosition(); return { lat: p.getLat(), lng: p.getLng() };
+                });
+
+                // find stores whose coords match clustered coords (loose match)
+                var clusteredStores = allStoresWithCoords.filter(function(s) {
+                    return clusteredCoords.some(function(cc) { return Math.abs(cc.lat - s.lat) < 1e-6 && Math.abs(cc.lng - s.lng) < 1e-6; });
+                });
+
+                // filter by adjusted visible bounds (exclude area covered by bottom-sheet/top-bar)
+                var visibleClustered = clusteredStores.filter(function(s) { return isInAdjustedBounds(s.lat, s.lng); });
+
+                renderStoreList(visibleClustered);
+            });
         }
 
         function populateStoreList(stores) {
+            // populate only business group select; rendering of list is handled by renderStoreList
+            const tempBusinessGroupList = [];
+            stores.forEach(function (s) { tempBusinessGroupList.push(s.businessGroup); });
+            populateBusinessGroupSelect(tempBusinessGroupList);
+        }
+
+        function renderStoreList(stores) {
             const storeList = document.getElementById('store-list');
             storeList.innerHTML = '';
-            const tempBusinessGroupList = [];
 
             stores.forEach(function (store) {
                 var storeInfoSection = document.createElement("section");
                 storeInfoSection.className = 'store-info';
                 storeInfoSection.tabIndex = "0";
-                storeInfoSection.addEventListener("mouseup", moveToStoreLocation);
+
+                // attach click handler that recenters map to the store coords
+                storeInfoSection.addEventListener("mouseup", function() {
+                    if (store.lat && store.lng) {
+                        var coords = new kakao.maps.LatLng(store.lat, store.lng);
+                        map.setLevel(4);
+                        map.setCenter(coords);
+                    } else {
+                        moveToStoreLocation.call(this);
+                    }
+                });
 
                 var storeNameDiv = document.createElement("div");
                 storeNameDiv.className = 'store-name';
@@ -357,11 +417,66 @@
                 storeInfoSection.appendChild(storeBusinessGroupDiv);
 
                 storeList.appendChild(storeInfoSection);
-                tempBusinessGroupList.push(store.businessGroup);
+            });
+        }
+
+        function updateVisibleStoreList() {
+            if (!allStoresWithCoords || allStoresWithCoords.length === 0) return;
+            var adj = getAdjustedBounds();
+            if (!adj) return;
+
+            var sw = adj.sw;
+            var ne = adj.ne;
+
+            var visible = allStoresWithCoords.filter(function(s) {
+                return s.lat >= sw.getLat() && s.lat <= ne.getLat() && s.lng >= sw.getLng() && s.lng <= ne.getLng();
             });
 
-            populateBusinessGroupSelect(tempBusinessGroupList);
+            renderStoreList(visible);
         }
+
+        // compute adjusted bounds that exclude areas covered by top-bar and bottom-sheet
+        function getAdjustedBounds() {
+            var bounds = map.getBounds();
+            if (!bounds) return null;
+            var sw = bounds.getSouthWest();
+            var ne = bounds.getNorthEast();
+
+            var heightPx = window.innerHeight || document.documentElement.clientHeight;
+            var topEl = document.getElementById('top-bar');
+            var bottomEl = document.getElementById('bottom-sheet');
+            var topH = topEl ? topEl.offsetHeight : 0;
+            var bottomH = bottomEl ? bottomEl.offsetHeight : 0;
+
+            var latSpan = ne.getLat() - sw.getLat();
+
+            var topFraction = topH / heightPx;
+            var bottomFraction = bottomH / heightPx;
+
+            // shrink lat bounds accordingly: move ne down by topFraction*latSpan, move sw up by bottomFraction*latSpan
+            var adjNeLat = ne.getLat() - (latSpan * topFraction);
+            var adjSwLat = sw.getLat() + (latSpan * bottomFraction);
+
+            // longitude unaffected by vertical overlays; return new bounds using kakao LatLng
+            return {
+                sw: new kakao.maps.LatLng(adjSwLat, sw.getLng()),
+                ne: new kakao.maps.LatLng(adjNeLat, ne.getLng())
+            };
+        }
+
+        function isInAdjustedBounds(lat, lng) {
+            var adj = getAdjustedBounds();
+            if (!adj) return false;
+            return lat >= adj.sw.getLat() && lat <= adj.ne.getLat() && lng >= adj.sw.getLng() && lng <= adj.ne.getLng();
+        }
+
+        // update list when map view changes
+        kakao.maps.event.addListener(map, 'idle', function() {
+            updateVisibleStoreList();
+        });
+        kakao.maps.event.addListener(map, 'zoom_changed', function() {
+            updateVisibleStoreList();
+        });
 
         function populateBusinessGroupSelect(groups) {
             var businessGroupList = document.getElementById('search-business-group');
