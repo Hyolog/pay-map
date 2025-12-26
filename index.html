@@ -40,8 +40,10 @@
             bottom: 0;
             left: 0;
             width: 100%;
-            height: 40vh; /* occupy about 50% of screen */
-            background: rgba(255,255,255,0.98);
+            height: 40vh; /* occupy about 40% of screen */
+            /* semi-transparent glass look */
+            background: rgba(255,255,255,0.6);
+            backdrop-filter: blur(6px);
             border-top-left-radius: 12px;
             border-top-right-radius: 12px;
             box-shadow: 0 -6px 18px rgba(0,0,0,0.12);
@@ -51,8 +53,22 @@
             box-sizing: border-box;
         }
 
+        /* restore scrollbar and style it for webkit browsers */
         #bottom-sheet::-webkit-scrollbar {
-            display: none;
+            width: 10px;
+        }
+        #bottom-sheet::-webkit-scrollbar-track {
+            background: rgba(0,0,0,0.04);
+            border-radius: 10px;
+        }
+        #bottom-sheet::-webkit-scrollbar-thumb {
+            background: rgba(0,0,0,0.18);
+            border-radius: 10px;
+        }
+        /* Firefox scrollbar */
+        #bottom-sheet {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(0,0,0,0.18) rgba(0,0,0,0.04);
         }
 
         #search {
@@ -483,6 +499,8 @@
         function renderStoreList(stores) {
             const storeList = document.getElementById('store-list');
             storeList.innerHTML = '';
+            storeList.style.maxHeight = 'calc(40vh - 24px)';
+            storeList.style.overflowY = 'auto';
 
             stores.forEach(function (store) {
                 var storeInfoSection = document.createElement("section");
