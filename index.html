@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
+    <title>YPay Store Map</title>
+
+    <!-- Kakao Maps SDK -->
+	<!-- Appkey has domain limit setting so there is no security issue-->
+    <script type="text/javascript" src="//dapi.kakao.com/v2/maps/sdk.js?appkey=a9517e460aa86036c7478c3d083449e3&libraries=services,clusterer,drawing"></script>
+
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+        }
+
+        #stores-search {
+            width: 18%;
+            height: 100vh;
+            float: left;
+            overflow-y: scroll;
+        }
+
+        #stores-search::-webkit-scrollbar {
+            display: none;
+        }
+
+        #search {
+            height: 50px;
+            background-color: white;
+            padding: 5px;
+        }
+
+        #search-name, #search-business-group {
+            width: 100%;
+            box-sizing: border-box;  
+            border-radius: 10px;
+            border: none;
+            background-color: #ebebeb;
+            margin-bottom: 5px;
+        }
+
+        .store-info {
+            padding: 10px;
+            border-bottom: 1px solid #f5f5f5;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .store-name {
+            font-size: 20px;
+            font-weight: bold;
+            color: #daa520;
+        }
+
+        #map {
+            width: 82%;
+            height: 100vh;
+            float: right;
+        }
+
+        .customoverlay {
+            background-color: #eef3fd;
+            border: #536AFF solid 1px;
+            border-radius: 5px;
+            color: #536AFF;
+            font-size: 13px;
+            font-weight: 600;
+            padding: 5px 11px;
+            position: relative;
+        }
+
+        .customoverlay:hover {
+            background-color: #CBDBFC;
+        }
+
+        .customoverlay:after, .customoverlay:before {
+            content: '';
+            display: block;
+            position: absolute;
+            left: 50%;
+            margin-left: -6px;
+        }
+
+        .customoverlay:after {
+            border-color: #eef3fd transparent;
+            border-width: 8px 6.5px 0;
+            top: 26px;
+        }
+
+        .customoverlay:hover:after {
+            border-color: #CBDBFC transparent;
+        }
+
+        .customoverlay:before {
+            border-color: #536AFF transparent;
+            border-width: 8px 6.5px 0;
+            top: 27.5px;
+        }
+
+        #loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+        }
+
+        .spinner {
+            border: 8px solid #f3f3f3;
+            border-top: 8px solid #daa520;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 2s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Busy Indicator-->
+    <div id="loading" style="display: none;">
+        <div class="spinner"></div>
+    </div>
+
+    <!-- Store Search Sidebar -->
+    <div id="stores-search">
+        <div id="search">
+            <input id="search-name" placeholder="가게 검색" onkeyup="filterStores()" />
+            <select id="search-business-group" onchange="filterStores()">
+                <option value="">업종 선택</option>
+            </select>
+        </div>
+        <div id="store-list"></div>
+    </div>
+
+    <!-- Map Container -->
+    <div id="map"></div>
+
+    <!-- Scripts -->
+    <script src="https://code.jquery.com/jquery-latest.js"></script>
+
+    <script>
+        // Kakao Map Initialization
+        var mapContainer = document.getElementById('map');
+        var mapOption = {
+            center: new kakao.maps.LatLng(37.4593, 127.074),
+            level: 8
+        };
+        var map = new kakao.maps.Map(mapContainer, mapOption);
+        var mapTypeControl = new kakao.maps.MapTypeControl();
+        map.addControl(mapTypeControl, kakao.maps.ControlPosition.TOPRIGHT);
+        var zoomControl = new kakao.maps.ZoomControl();
+        map.addControl(zoomControl, kakao.maps.ControlPosition.RIGHT);
+
+        (function fetchStoresFromApi() {
+            // TODO : 키 암호화
+            const SERVICE_KEY = '';
+            const NUM_OF_ROWS = 1000;
+            const PAGE_NO = 1;
+
+            document.getElementById('loading').style.display = 'flex';
+
+            var url = new URL('https://apis.data.go.kr/4050000/ypay/getYpay');
+            url.searchParams.set('serviceKey', SERVICE_KEY);
+            url.searchParams.set('numOfRows', NUM_OF_ROWS);
+            url.searchParams.set('pageNo', PAGE_NO);
+
+            fetch(url.toString())
+                .then(function (res) {
+                    if (!res.ok) throw new Error('네트워크 응답 오류: ' + res.status);
+                    return res.json();
+                })
+                .then(function (json) {
+                    var items = [];
+
+                    if (json && Array.isArray(json.items)) {
+                        items = json.items;
+                    } else {
+                        console.warn('응답이 예상과 다릅니다. 응답:', json);
+                    }
+
+                    var stores = items.map(function (it) {
+                        return {
+                            name: it.aflt_nm || '',
+                            location: it.addr || '',
+                            businessGroup: it.fld || '',
+                        };
+                    }).filter(function(s) {
+                        // 주소가 없는 항목들 제거
+                        return s.location && s.location.trim().length > 0;
+                    });
+
+                    if (stores.length === 0) {
+                        console.warn('API로부터 가게 목록을 얻지 못했거나 유효한 가게정보가 없습니다.');
+                    }
+
+                    stores.sort(function (a, b) { return a.name.localeCompare(b.name); });
+
+                    makeStoreClusterer({ stores: stores });
+                    populateStoreList(stores);
+                })
+                .catch(function (err) {
+                    console.error('가게 정보 API 호출 실패:', err);
+                    document.getElementById('loading').style.display = 'none';
+                });
+        })();
+
+        function makeStoreClusterer(data) {
+            document.getElementById('loading').style.display = 'flex';
+
+            var clusterer = new kakao.maps.MarkerClusterer({
+                map: map,
+                averageCenter: true,
+                minLevel: 5
+            });
+
+            var geocoder = new kakao.maps.services.Geocoder();
+            var stores = data.stores;
+            var total = stores.length;
+            var coords = {};
+            var requestInterval = 100; // Request interval
+            var chunkSize = 20; // Number of stores to process per batch
+            var currentIndex = 0; // Current store index to process
+
+            // Function to send requests sequentially
+            function sendNextRequest() {
+                if (currentIndex >= total) {
+                    addMarkersToClusterStores(stores, coords, clusterer);
+                    document.getElementById('loading').style.display = 'none';
+                    return;
+                }
+
+                var chunk = stores.slice(currentIndex, currentIndex + chunkSize);
+                currentIndex += chunkSize;
+
+                var requestsRemaining = chunk.length;
+                chunk.forEach(function (store) {
+                    geocoder.addressSearch(store.location, function (data, status) {
+                        if (status === kakao.maps.services.Status.OK) {
+                            coords[store.location] = data[0];
+                        } else {
+                            console.warn('위치 정보 변환 실패:', store.location, status);
+                        }
+                        requestsRemaining--;
+
+                        if (requestsRemaining === 0) {
+                            setTimeout(sendNextRequest, requestInterval);
+                        }
+                    });
+                });
+            }
+
+            sendNextRequest();
+        }
+
+        function addMarkersToClusterStores(stores, coords, clusterer) {
+            var markers = [];
+            stores.forEach(function (store) {
+                if (coords[store.location]) {
+                    var pos = new kakao.maps.LatLng(coords[store.location].y, coords[store.location].x);
+                    var marker = new kakao.maps.Marker({ position: pos });
+                    var content = `<div class="customoverlay">${store.name}</div>`;
+                    var overlay = new kakao.maps.CustomOverlay({ content, map: map, position: pos, yAnchor: 2.1 });
+
+                    marker.addListener('click', function () {
+                        overlay.setMap(map);
+                        setTimeout(function () { overlay.setMap(null); }, 3000);
+                    });
+
+                    markers.push(marker);
+                    overlay.setMap(null);
+                }
+            });
+            clusterer.addMarkers(markers);
+        }
+
+        function populateStoreList(stores) {
+            const storeList = document.getElementById('store-list');
+            storeList.innerHTML = '';
+            const tempBusinessGroupList = [];
+
+            stores.forEach(function (store) {
+                var storeInfoSection = document.createElement("section");
+                storeInfoSection.className = 'store-info';
+                storeInfoSection.tabIndex = "0";
+                storeInfoSection.addEventListener("mouseup", moveToStoreLocation);
+
+                var storeNameDiv = document.createElement("div");
+                storeNameDiv.className = 'store-name';
+                storeNameDiv.innerHTML = store.name;
+                storeInfoSection.appendChild(storeNameDiv);
+
+                var storeLocationDiv = document.createElement("div");
+                storeLocationDiv.className = 'store-location';
+                storeLocationDiv.innerHTML = store.location;
+                storeInfoSection.appendChild(storeLocationDiv);
+
+                var storeBusinessGroupDiv = document.createElement("div");
+                storeBusinessGroupDiv.className = 'store-business-group';
+                storeBusinessGroupDiv.innerHTML = store.businessGroup;
+                storeInfoSection.appendChild(storeBusinessGroupDiv);
+
+                storeList.appendChild(storeInfoSection);
+                tempBusinessGroupList.push(store.businessGroup);
+            });
+
+            populateBusinessGroupSelect(tempBusinessGroupList);
+        }
+
+        function populateBusinessGroupSelect(groups) {
+            var businessGroupList = document.getElementById('search-business-group');
+            businessGroupList.innerHTML = '<option value="">업종 선택</option>';
+            const set = new Set(groups.sort());
+
+            set.forEach(function (item) {
+                if (!item) return;
+                var option = document.createElement('option');
+                option.value = item;
+                option.text = item;
+                businessGroupList.add(option, null);
+            });
+        }
+
+        let currentCircle = null; // Variable to store the currently displayed circle
+
+        function moveToStoreLocation() {
+            var location = this.querySelector('.store-location').textContent;
+            var geocoder = new kakao.maps.services.Geocoder();
+
+            geocoder.addressSearch(location, function (position, status) {
+                if (status === kakao.maps.services.Status.OK) {
+                    var coords = new kakao.maps.LatLng(position[0].y, position[0].x);
+                    map.setLevel(4);
+                    map.setCenter(coords);
+
+                    if (currentCircle) {
+                        currentCircle.setMap(null);
+                    }
+
+                    var circle = new kakao.maps.Circle({
+                        center: coords,
+                        radius: 80,
+                        strokeWeight: 5,
+                        strokeColor: '#DAA520',
+                        strokeOpacity: 0.9,
+                        strokeStyle: 'solid',
+                        fillColor: '#FFF8DC',
+                        fillOpacity: 0.5
+                    });
+
+                    circle.setMap(map); 
+                    currentCircle = circle;
+                } else {
+                    console.warn('리스트 클릭 지오코딩 실패:', location, status);
+                }
+            });
+        }
+
+        function filterStores() {
+            var storeList = document.getElementsByClassName('store-info');
+            var searchName = document.getElementById('search-name').value.toUpperCase();
+            var selectedBusinessGroup = document.getElementById('search-business-group').value;
+
+            Array.from(storeList).forEach(function (storeEl) {
+                var name = storeEl.getElementsByClassName('store-name')[0].innerHTML.toUpperCase();
+                var businessGroup = storeEl.getElementsByClassName('store-business-group')[0].innerHTML;
+
+                if (name.indexOf(searchName) > -1 && (!selectedBusinessGroup || businessGroup === selectedBusinessGroup)) {
+                    storeEl.style.display = "block";
+                } else {
+                    storeEl.style.display = "none";
+                }
+            });
+        }
+    </script>
+</body>
+
+</html>
