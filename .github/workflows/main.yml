@@ -6,7 +6,7 @@ on:
 
 permissions:
   contents: read
-  pages: write   # <-- This line is required
+  pages: write
   id-token: write
 
 jobs:
@@ -28,7 +28,6 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
 
-  # Deployment job
   deploy:
     environment:
       name: github-pages
