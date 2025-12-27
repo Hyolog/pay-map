@@ -31,10 +31,11 @@ export async function fetchStoresAndGeocode() {
 }
 
 async function geocodeStores(stores) {
+    console.time('geocodeStores');
     const geocoder = new kakao.maps.services.Geocoder();
     const coords = {};
-    const chunkSize = 20;
-    const requestInterval = 200;
+    const chunkSize = 50;
+    const requestInterval = 50;
 
     for (let i = 0; i < stores.length; i += chunkSize) {
         const chunk = stores.slice(i, i+chunkSize);
@@ -74,6 +75,9 @@ async function geocodeStores(stores) {
     const markers = allStoresWithCoords.map(s => new kakao.maps.Marker({ position: new kakao.maps.LatLng(s.lat, s.lng) }));
     clearMarkers([]); // no-op fallback
     addMarkersToCluster(markers);
+
+    console.log(stores.length);
+    console.timeEnd('geocodeStores');
 }
 
 export function getAllStoresWithCoords() { return allStoresWithCoords; }
