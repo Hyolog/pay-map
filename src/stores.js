@@ -1,11 +1,16 @@
 import { addMarkersToCluster, clearMarkers, getClusterer } from './map.js';
+import { SERVICE_KEY } from './apikey.js';
 
 let allStoresWithCoords = [];
 
 export async function fetchStoresAndGeocode() {
-    const SERVICE_KEY = window.config && window.config.apikey;
     const NUM_OF_ROWS = 1000;
     const PAGE_NO = 1;
+
+    if (!SERVICE_KEY) {
+        console.error('SERVICE_KEY is missing');
+        return [];
+    }
 
     const url = new URL('https://apis.data.go.kr/4050000/ypay/getYpay');
     url.searchParams.set('serviceKey', SERVICE_KEY);

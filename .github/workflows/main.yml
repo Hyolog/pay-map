@@ -19,7 +19,7 @@ jobs:
         uses: actions/configure-pages@v4
       - name: Generate API key file
         run: |
-          echo "const config = { apikey: '${{ secrets.SERVICE_KEY }}' };" > apikey.js
+          echo "export const SERVICE_KEY='${{ secrets.SERVICE_KEY }}';" > src/apikey.js
       - name: Build with Jekyll
         uses: actions/jekyll-build-pages@v1
         with:
